@@ -10,6 +10,10 @@ detaljerne N701-N707. X = modullinje 1 -> 5 (vest -> oest), Y = A -> I
   (felt C-F), 60 graders tag i alu i gavlfelterne A-C og F-I.
 - Ydervaegge: 108 mm formur af tegl.
 
+Farver og altanplacering er fra projektets situationsplan og 3D-visning
+(K01_A13_H1_SIT_902): sandfarvet tegl, terrakottafarvede skraatage, altaner
+mod Moellevejen (vest), mod oest og paa sydgavlen.
+
 Modullinjeafstande er aflaest fra tagplanen; felternes laengder (A-C, C-F,
 F-I), etagehoejden, vinduer og altaner er estimeret fra tegningerne.
 """
@@ -36,8 +40,8 @@ WIN_W, WIN_H, WIN_SILL, WIN_D = 1200, 1600, 800, 250
 ROOF_T = 250           # alu-beklaedning + overkant, vist som en plade
 BAL_D, BAL_T, RAIL_H = 1500, 200, 1100
 
-BRICK = (0.56, 0.27, 0.19)
-ALU = (0.71, 0.73, 0.75)
+BRICK = (0.82, 0.69, 0.50)     # sandfarvet tegl
+ROOF = (0.72, 0.36, 0.21)      # terrakottafarvet tagbeklaedning
 FELT = (0.13, 0.13, 0.14)
 GLASS = (0.16, 0.22, 0.30)
 CONCRETE = (0.80, 0.79, 0.76)
@@ -130,15 +134,32 @@ def windows():
     return out
 
 
-def balconies():
-    """Altaner paa oestfloejens gavle (syd og nord), etage 1-5."""
+def balcony_stack(face, a0, a1):
+    """Altaner paa etage 1-5 foran en facade; a0-a1 er udstraekningen langs facaden."""
     slabs, rails = [], []
-    x0, x1 = GRID_2 + 900, GRID_5 - 900
     for f in range(1, FLOORS):
         z = f * FLOOR_H - BAL_T
-        for y, front in ((-BAL_D, -BAL_D), (LENGTH, LENGTH + BAL_D - 60)):
-            slabs.append(box(x0, y, z, x1 - x0, BAL_D, BAL_T))
-            rails.append(box(x0, front, z + BAL_T, x1 - x0, 60, RAIL_H))
+        w = a1 - a0
+        if face == "vest":
+            slabs.append(box(GRID_1 - BAL_D, a0, z, BAL_D, w, BAL_T))
+            rails.append(box(GRID_1 - BAL_D, a0, z + BAL_T, 60, w, RAIL_H))
+        elif face == "oest":
+            slabs.append(box(GRID_5, a0, z, BAL_D, w, BAL_T))
+            rails.append(box(GRID_5 + BAL_D - 60, a0, z + BAL_T, 60, w, RAIL_H))
+        else:  # syd
+            slabs.append(box(a0, -BAL_D, z, w, BAL_D, BAL_T))
+            rails.append(box(a0, -BAL_D, z + BAL_T, w, 60, RAIL_H))
+    return slabs, rails
+
+
+def balconies():
+    """Altaner mod Moellevejen (vest), mod oest og paa sydgavlen."""
+    slabs, rails = [], []
+    for face, a0, a1 in (("vest", 10300, 13700), ("vest", 15500, 18900),
+                         ("oest", 13100, 16500), ("syd", 10200, 14300)):
+        s_, r_ = balcony_stack(face, a0, a1)
+        slabs += s_
+        rails += r_
     return slabs, rails
 
 
@@ -158,7 +179,7 @@ def bygning():
     slabs, rails = balconies()
     return bd.Compound(children=[
         part(walls, "tegl", BRICK),
-        part(alu, "tag_alu", ALU),
+        part(alu, "tag", ROOF),
         part(felt, "tag_pap", FELT),
         part([pane for _, pane in wins], "vinduer", GLASS),
         part(slabs, "altaner", CONCRETE),
