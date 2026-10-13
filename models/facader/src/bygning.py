@@ -1,97 +1,169 @@
-"""Moellehaven, Aarhus - 3D-volumen af bygningen i facader.py, i mm.
+"""Moellehaven, Aarhus - 3D-model af bygningen, i mm.
 
-X = vest->oest (gavlbredde), Y = syd->nord (langside), Z = op.
-Profilet er facade syd/nord fra facader.py; maal er estimeret fra skitse.
+Kilder: Tagplan (K01_A13_H3_Etag_N600), Snit A (K01_A13_H3_Etag_SA_N400) og
+detaljerne N701-N707. X = modullinje 1 -> 5 (vest -> oest), Y = A -> I
+(syd -> nord), Z = op, terraen i Z = 0.
+
+- Oestfloej (linje 2-5): 15 graders pulttag i alu, kote 22039 ved linje 2
+  ned til 19000 ved linje 5.
+- Vestfloej (linje 1-2): fladt tag med tagpap (kote ca. 19700) i midten
+  (felt C-F), 60 graders tag i alu i gavlfelterne A-C og F-I.
+- Ydervaegge: 108 mm formur af tegl.
+
+Modullinjeafstande er aflaest fra tagplanen; felternes laengder (A-C, C-F,
+F-I), etagehoejden, vinduer og altaner er estimeret fra tegningerne.
 """
 from cadgen import build123d as bd
 from cadgen import glb, step
 
-DEPTH = 24600          # oest-vest, facade syd/nord bredde
-LENGTH = 35000         # syd-nord, facade oest/vest bredde
-FLOOR_H = 3200
+# Modullinjer (X) fra tagplanen: 1-2 ca. 9300, 2-3 1482, 3-4 2612, 4-5 7177
+GRID_1 = 0
+GRID_2 = 9300
+GRID_5 = GRID_2 + 1482 + 2612 + 7177       # 20571
+LENGTH = 30000                             # A-I
+BAND_S = 9500                              # A-C: 60 graders tag, syd
+BAND_N = 19700                             # F-I: 60 graders tag, nord
+
+RIDGE = 22039          # Snit A, linje 2
+EAVE_E = 19000         # Snit A, linje 5
+FLAT = 19700           # fladt tag (19727 -> 19555)
+STEEP_ANGLE = 60       # (27)02 tag 60 grader
+STEEP_SLOPE_LEN = 9122 # (27)02 elementlaengde
+FLOOR_H = 3100
 FLOORS = 6
-EAVE_E = 20000
-EAVE_W = 14000
-RIDGE = 22000
-RIDGE_X = 9000
-WIN_W, WIN_H, WIN_SILL, WIN_D = 1000, 1500, 900, 250
-BAL_D, BAL_T = 1500, 200
+
+WIN_W, WIN_H, WIN_SILL, WIN_D = 1200, 1600, 800, 250
+ROOF_T = 250           # alu-beklaedning + overkant, vist som en plade
+BAL_D, BAL_T, RAIL_H = 1500, 200, 1100
+
+BRICK = (0.56, 0.27, 0.19)
+ALU = (0.71, 0.73, 0.75)
+FELT = (0.13, 0.13, 0.14)
+GLASS = (0.16, 0.22, 0.30)
+CONCRETE = (0.80, 0.79, 0.76)
+RAIL = (0.62, 0.76, 0.82)
 
 
-def profile_prism(y0, y1):
-    pts = [(0, 0), (DEPTH, 0), (DEPTH, EAVE_E), (RIDGE_X, RIDGE), (0, EAVE_W)]
-    face = bd.Plane.XZ.offset(-y0) * bd.Face(bd.Wire.make_polygon([bd.Vector(x, z, 0) for x, z in pts], close=True))
-    return bd.extrude(face, amount=y1 - y0, dir=(0, 1, 0))
+def steep_rise():
+    """60-graders taget: (vandret laengde, stigning) af elementet."""
+    import math
+    a = math.radians(STEEP_ANGLE)
+    return STEEP_SLOPE_LEN * math.cos(a), STEEP_SLOPE_LEN * math.sin(a)
+
+
+def roof_z(x, y):
+    """Tagfladens kote over punktet (x, y)."""
+    if x >= GRID_2:
+        return RIDGE + (EAVE_E - RIDGE) * (x - GRID_2) / (GRID_5 - GRID_2)
+    if BAND_S <= y <= BAND_N:
+        return FLAT
+    run, rise = steep_rise()
+    x0 = GRID_2 - run
+    return RIDGE - rise if x <= x0 else RIDGE - rise * (GRID_2 - x) / run
+
+
+def prism(pts, y0, y1):
+    """Polygon i XZ-planet (x, z), ekstruderet fra y0 til y1."""
+    wire = bd.Wire.make_polygon([bd.Vector(x, y0, z) for x, z in pts], close=True)
+    return bd.extrude(bd.Face(wire), amount=y1 - y0, dir=(0, 1, 0))
 
 
 def box(x, y, z, dx, dy, dz):
     return bd.Pos(x + dx / 2, y + dy / 2, z + dz / 2) * bd.Box(dx, dy, dz)
 
 
-def roof_z(x):
-    """Tagfladens hoejde over gavlprofilet ved x."""
-    if x <= RIDGE_X:
-        return EAVE_W + (RIDGE - EAVE_W) * x / RIDGE_X
-    return RIDGE + (EAVE_E - RIDGE) * (x - RIDGE_X) / (DEPTH - RIDGE_X)
+def west_end_profile():
+    run, rise = steep_rise()
+    x0 = GRID_2 - run
+    return [(GRID_1, 0), (GRID_2, 0), (GRID_2, RIDGE), (x0, RIDGE - rise), (GRID_1, RIDGE - rise)]
 
 
-def window_cuts():
-    cuts = []
+def shell():
+    east = prism([(GRID_2, 0), (GRID_5, 0), (GRID_5, EAVE_E), (GRID_2, RIDGE)], 0, LENGTH)
+    south = prism(west_end_profile(), 0, BAND_S)
+    north = prism(west_end_profile(), BAND_N, LENGTH)
+    middle = box(GRID_1, BAND_S, 0, GRID_2 - GRID_1, BAND_N - BAND_S, FLAT)
+    return east + south + north + middle
+
+
+def roofs():
+    """Tagbeklaedning som plader oven paa skallen: alu-tage og tagpap."""
+    run, rise = steep_rise()
+    x0 = GRID_2 - run
+    over = 300
+    k = (EAVE_E - RIDGE) / (GRID_5 - GRID_2)
+    east = prism([(GRID_2, RIDGE), (GRID_5 + over, EAVE_E + k * over),
+                  (GRID_5 + over, EAVE_E + k * over + ROOF_T), (GRID_2, RIDGE + ROOF_T)], -over, LENGTH + over)
+    steep_pts = [(x0, RIDGE - rise), (GRID_2, RIDGE), (GRID_2, RIDGE + ROOF_T),
+                 (x0 - 150, RIDGE - rise + ROOF_T / 2)]
+    flat_pts = [(GRID_1 - over, RIDGE - rise), (x0, RIDGE - rise),
+                (x0, RIDGE - rise + ROOF_T), (GRID_1 - over, RIDGE - rise + ROOF_T)]
+    alu = [east,
+           prism(steep_pts, -over, BAND_S), prism(steep_pts, BAND_N, LENGTH + over),
+           prism(flat_pts, -over, BAND_S), prism(flat_pts, BAND_N, LENGTH + over)]
+    felt = box(GRID_1 - over, BAND_S, FLAT, GRID_2 - GRID_1 + over, BAND_N - BAND_S, ROOF_T / 2)
+    return alu, [felt]
+
+
+def windows():
+    """(hul, rude) par paa alle fire facader, under tagfladen."""
+    out = []
     for f in range(FLOORS):
         z = f * FLOOR_H + WIN_SILL
-        pitch = (LENGTH - 2400) / 14
-        for c in range(14):
-            y = 1200 + pitch * (c + .5) - WIN_W / 2
-            cuts.append(box(DEPTH - WIN_D, y, z, WIN_D + 10, WIN_W, WIN_H))       # oest
-            if z + WIN_H < EAVE_W - 300:
-                cuts.append(box(-10, y, z, WIN_D + 10, WIN_W, WIN_H))             # vest
-        pitch = (DEPTH - 3000) / 7
-        for c in range(7):
-            x = 1500 + pitch * (c + .5) - WIN_W / 2
-            if z + WIN_H + 300 > min(roof_z(x), roof_z(x + WIN_W)):
+        top = z + WIN_H + 400
+        # oest (x = GRID_5) og vest (x = GRID_1): 12 fag a 2400 langs Y
+        for c in range(12):
+            y = 600 + 2400 * c + (2400 - WIN_W) / 2
+            if top < roof_z(GRID_5, y):
+                out.append((box(GRID_5 - WIN_D, y, z, WIN_D + 10, WIN_W, WIN_H),
+                            box(GRID_5 - 130, y, z, 20, WIN_W, WIN_H)))
+            if top < roof_z(GRID_1, y) and top < roof_z(GRID_1, y + WIN_W):
+                out.append((box(GRID_1 - 10, y, z, WIN_D + 10, WIN_W, WIN_H),
+                            box(GRID_1 + 110, y, z, 20, WIN_W, WIN_H)))
+        # syd (y = 0) og nord (y = LENGTH): fag langs X
+        for x in (900, 3600, 6300, 10400, 12900, 15400, 17900):
+            if top > min(roof_z(x, 0), roof_z(x + WIN_W, 0)):
                 continue
-            for y in (-10, LENGTH - WIN_D):                                       # syd, nord
-                cuts.append(box(x, y, z, WIN_W, WIN_D + 10, WIN_H))
-    return cuts
-
-
-def glass():
-    """Ruder, sat 120 mm inde i hvert vindueshul."""
-    panes = []
-    for c in window_cuts():
-        bb = c.bounding_box()
-        if bb.size.X < bb.size.Y:      # oest/vest: hullet gaar i X
-            x = DEPTH - 130 if bb.min.X > 0 else 110
-            panes.append(box(x, bb.min.Y, bb.min.Z, 20, bb.size.Y, bb.size.Z))
-        else:                          # syd/nord: hullet gaar i Y
-            y = LENGTH - 130 if bb.min.Y > 0 else 110
-            panes.append(box(bb.min.X, y, bb.min.Z, bb.size.X, 20, bb.size.Z))
-    return panes
+            out.append((box(x, -10, z, WIN_W, WIN_D + 10, WIN_H), box(x, 110, z, WIN_W, 20, WIN_H)))
+            out.append((box(x, LENGTH - WIN_D, z, WIN_W, WIN_D + 10, WIN_H),
+                        box(x, LENGTH - 130, z, WIN_W, 20, WIN_H)))
+    return out
 
 
 def balconies():
-    slabs = []
+    """Altaner paa oestfloejens gavle (syd og nord), etage 1-5."""
+    slabs, rails = [], []
+    x0, x1 = GRID_2 + 900, GRID_5 - 900
     for f in range(1, FLOORS):
         z = f * FLOOR_H - BAL_T
-        slabs.append(box(0, -BAL_D, z, DEPTH, BAL_D, BAL_T))
-        slabs.append(box(0, LENGTH, z, DEPTH, BAL_D, BAL_T))
-    return bd.Compound(slabs) & profile_prism(-BAL_D - 10, LENGTH + BAL_D + 10)
+        for y, front in ((-BAL_D, -BAL_D), (LENGTH, LENGTH + BAL_D - 60)):
+            slabs.append(box(x0, y, z, x1 - x0, BAL_D, BAL_T))
+            rails.append(box(x0, front, z + BAL_T, x1 - x0, 60, RAIL_H))
+    return slabs, rails
+
+
+def part(shapes, label, rgb):
+    c = bd.Compound(shapes) if isinstance(shapes, list) else shapes
+    c.label = label
+    c.color = bd.Color(*rgb)
+    return c
 
 
 @step(out="../STEP/bygning.step")
 @glb(out="../GLB/bygning.glb")
 def bygning():
-    body = profile_prism(0, LENGTH) - bd.Compound(window_cuts())
-    body.label = "bygning"
-    body.color = bd.Color(0.62, 0.62, 0.64)
-    bal = balconies()
-    bal = bd.Compound(bal.solids()) if hasattr(bal, "solids") else bal
-    bal.label = "altaner"
-    bal.color = bd.Color(0.25, 0.25, 0.27)
-    win = bd.Compound(glass())
-    win.label = "vinduer"
-    win.color = bd.Color(0.16, 0.22, 0.30)
-    return bd.Compound(children=[body, bal, win], label="moellehaven")
+    wins = windows()
+    walls = shell() - bd.Compound([hole for hole, _ in wins])
+    alu, felt = roofs()
+    slabs, rails = balconies()
+    return bd.Compound(children=[
+        part(walls, "tegl", BRICK),
+        part(alu, "tag_alu", ALU),
+        part(felt, "tag_pap", FELT),
+        part([pane for _, pane in wins], "vinduer", GLASS),
+        part(slabs, "altaner", CONCRETE),
+        part(rails, "altanvaern", RAIL),
+    ], label="moellehaven")
 
 
 if __name__ == "__main__":
